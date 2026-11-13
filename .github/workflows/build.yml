@@ -1,0 +1,61 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # 1) Build and test the Rust library on every supported platform.
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x86_64,   os: ubuntu-latest,    lib: librustlib.so }
+          - { platform: linux-aarch64,  os: ubuntu-24.04-arm, lib: librustlib.so }
+          - { platform: windows-x86_64, os: windows-latest,   lib: rustlib.dll }
+          - { platform: macos-x86_64,   os: macos-15-intel,        lib: librustlib.dylib }
+          - { platform: macos-aarch64,  os: macos-latest,     lib: librustlib.dylib }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: native }
+      - name: Tests
+        working-directory: native
+        run: cargo test --release
+      - name: Build (with zstd)
+        working-directory: native
+        run: cargo build --release --features zstd
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.platform }}
+          path: native/target/release/${{ matrix.lib }}
+
+  # 2) Package a single JAR containing ALL binaries under natives/<os>-<arch>/.
+  package:
+    needs: native
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 25 }
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/download-artifact@v4
+        with: { path: dist }
+      - name: Place binaries in native-dist/natives/<platform>/
+        run: |
+          for d in dist/native-*; do
+            p="${d#dist/native-}"
+            mkdir -p "native-dist/natives/$p"
+            cp "$d"/* "native-dist/natives/$p/"
+          done
+          find native-dist -type f
+      - run: ./gradlew build -PskipNative
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rustlib-jar
+          path: build/libs/*.jar

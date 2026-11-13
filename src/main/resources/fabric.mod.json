@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "rustlib",
+  "version": "${version}",
+  "name": "RustLib",
+  "description": "Base library: a native Rust engine (noise, raycast/AABB, compression) with a Java API for other mods.",
+  "license": "LGPL-3.0-only",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["dev.rustlib.RustLibMod"]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.3",
+    "minecraft": "~26.1",
+    "java": ">=25"
+  }
+}

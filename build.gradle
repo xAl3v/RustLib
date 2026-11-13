@@ -1,0 +1,97 @@
+plugins {
+    // Minecraft 26.1+ is not obfuscated: use the plugin WITHOUT "remap" (and without a `mappings` line).
+    id 'net.fabricmc.fabric-loom' version "${loom_version}"
+    id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+repositories {
+    // Loom already adds the Minecraft/Fabric repositories. Add your own here if needed.
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    // Development environment only (runClient); the mod does not depend on Fabric API at runtime.
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+}
+
+// ----------------------------------------------------------------------------------------
+// Native library (Rust)
+//
+//  * Local development:  `./gradlew build`  compiles native/ with `cargo` for YOUR platform and
+//    puts it in the JAR at  natives/<os>-<arch>/<lib>.
+//  * Multi-platform release: CI builds each target and places the binaries in
+//    native-dist/natives/<os>-<arch>/<lib>; then run `./gradlew build -PskipNative`.
+//
+//  Platform identifiers (must match NativeBridge.java):
+//    linux-x86_64 | linux-aarch64 | windows-x86_64 | windows-aarch64 | macos-x86_64 | macos-aarch64
+// ----------------------------------------------------------------------------------------
+def osName   = System.getProperty('os.name').toLowerCase()
+def archName = System.getProperty('os.arch').toLowerCase()
+def hostOs   = (osName.contains('mac') || osName.contains('darwin')) ? 'macos' : osName.contains('win') ? 'windows' : 'linux'
+def hostArch = (archName in ['aarch64', 'arm64']) ? 'aarch64' : 'x86_64'
+def hostLib  = hostOs == 'windows' ? 'rustlib.dll' : hostOs == 'macos' ? 'librustlib.dylib' : 'librustlib.so'
+def generatedRes = layout.buildDirectory.dir('generated/natives-res')
+
+def cargoBuild = tasks.register('cargoBuild', Exec) {
+    group = 'build'
+    description = 'Builds the Rust library (cargo build --release) for the current platform'
+    workingDir = file('native')
+    commandLine 'cargo', 'build', '--release'
+    inputs.dir('native/src')
+    inputs.file('native/Cargo.toml')
+    outputs.file("native/target/release/${hostLib}")
+}
+
+def stageHostNative = tasks.register('stageHostNative', Copy) {
+    dependsOn cargoBuild
+    from("native/target/release/${hostLib}")
+    into generatedRes.map { it.dir("natives/${hostOs}-${hostArch}") }
+}
+
+sourceSets.main.resources.srcDir generatedRes   // locally built binary
+sourceSets.main.resources.srcDir 'native-dist'  // binaries for all platforms (CI)
+
+processResources {
+    if (!project.hasProperty('skipNative')) {
+        dependsOn stageHostNative
+    }
+    inputs.property 'version', project.version
+    filesMatching('fabric.mod.json') {
+        expand 'version': inputs.properties.version
+    }
+}
+
+// The sources JAR reads the generated resources directory: Gradle 9 requires declaring the dependency.
+// Native binaries must not go into the sources JAR.
+// (withType + configureEach does not depend on the task already existing: `java { withSourcesJar() }` below creates it)
+tasks.withType(Jar).configureEach {
+    if (name == 'sourcesJar') {
+        if (!project.hasProperty('skipNative')) {
+            dependsOn stageHostNative
+        }
+        exclude 'natives/**'
+    }
+}
+
+// Include the licenses inside the JAR (a practical requirement of the LGPL and of third-party notices)
+tasks.named('jar') {
+    from('LICENSE', 'COPYING', 'THIRD_PARTY_NOTICES.md')
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = 25
+}
+
+java {
+    withSourcesJar()
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+}

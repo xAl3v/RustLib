@@ -1,0 +1,37 @@
+[package]
+name = "rustlib-native"
+version = "0.1.0"
+edition = "2021"
+description = "Native (JNI) engine to accelerate heavy computations in Fabric mods"
+license = "LGPL-3.0-only"
+publish = false
+
+[lib]
+# The library name produces: rustlib.dll / librustlib.so / librustlib.dylib
+name = "rustlib"
+# cdylib -> loaded by the JVM. rlib -> allows `cargo test` and benchmarks without a JVM.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+jni = "0.21"          # Safe JNI interface (JNIEnv, JByteBuffer...)
+rayon = "1.10"        # Data parallelism (dedicated pool, see pool.rs)
+lz4_flex = "0.11"     # LZ4 in pure Rust (no C, builds on any target)
+wide = "0.7"          # Portable SIMD (f32x8 / i32x8) on stable Rust
+bytemuck = "1"        # Casts &[u8] <-> &[f32]/&[f64] with alignment checks
+
+# Zstd needs to compile C code (zstd-sys), so it sits behind a feature:
+#   cargo build --release --features zstd
+zstd = { version = "0.13", optional = true, default-features = false }
+
+[features]
+default = []
+zstd = ["dep:zstd"]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+# IMPORTANT: must be "unwind" (the default). With "abort", catch_unwind does not
+# work and a panic would kill the whole Minecraft process.
+panic = "unwind"
